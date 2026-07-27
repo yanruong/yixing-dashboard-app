@@ -11,6 +11,7 @@ Required secrets (Streamlit Cloud -> app settings -> Secrets):
 """
 import hmac
 import re
+import time
 
 import requests
 import streamlit as st
@@ -37,14 +38,22 @@ def password_ok() -> bool:
             st.session_state["auth_ok"] = True
             st.session_state["pw"] = ""  # don't keep the password around
         else:
+            fails = st.session_state.get("fails", 0) + 1
+            st.session_state["fails"] = fails
+            # Escalating delay makes brute-forcing impractical
+            time.sleep(min(2 ** fails, 30))
             st.session_state["auth_error"] = True
 
+    locked = st.session_state.get("fails", 0) >= 8
     _, mid, _ = st.columns([1, 1, 1])
     with mid:
         st.markdown("### Yixing Goldsmith")
-        st.text_input("Password", type="password", key="pw", on_change=check)
-        if st.session_state.get("auth_error"):
-            st.error("Incorrect password")
+        if locked:
+            st.error("Too many failed attempts — reload the page to try again.")
+        else:
+            st.text_input("Password", type="password", key="pw", on_change=check)
+            if st.session_state.get("auth_error"):
+                st.error("Incorrect password")
     return False
 
 
