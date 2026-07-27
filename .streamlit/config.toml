@@ -1,0 +1,6 @@
+[server]
+# dashboard.html is ~16 MB and is sent to the browser over one websocket message
+maxMessageSize = 300
+
+[theme]
+base = "light"
