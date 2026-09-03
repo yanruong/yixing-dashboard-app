@@ -1,9 +1,12 @@
-"""Public Streamlit app that serves the Yixing Goldsmith dashboard.
+"""Public Streamlit app that serves the Yixing dashboards (Goldsmith + Bulk Chain).
 
-Contains NO data. On correct password entry it fetches dashboard.html from the
-private repo yanruong/yixing-dashboard-live using a read-only GitHub token kept
-in Streamlit secrets, then embeds it full-screen. Nothing is sent to the
-browser until the password check passes server-side.
+Contains NO data. On correct password entry it fetches the *selected* dashboard
+HTML from the private repo yanruong/yixing-dashboard-live using a read-only
+GitHub token kept in Streamlit secrets, then embeds it full-screen. Nothing is
+sent to the browser until the password check passes server-side.
+
+Only the dashboard the viewer is currently looking at is fetched (each is cached
+independently for 5 minutes), so the toggle never loads both at once.
 
 Required secrets (Streamlit Cloud -> app settings -> Secrets):
   GITHUB_TOKEN       = fine-grained PAT, contents:read on yixing-dashboard-live
@@ -18,10 +21,15 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 DATA_REPO = "yanruong/yixing-dashboard-live"
-DATA_FILE = "dashboard.html"
+# Display label -> HTML file in the private data repo. Add rows here to serve
+# more dashboards; each is fetched lazily and cached on its own.
+DASHBOARDS = {
+    "Goldsmith": "dashboard.html",
+    "Bulk Chain": "dashboard_bulk.html",
+}
 
 st.set_page_config(
-    page_title="Yixing Goldsmith Dashboard",
+    page_title="Yixing Dashboards",
     page_icon="💍",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -47,7 +55,7 @@ def password_ok() -> bool:
     locked = st.session_state.get("fails", 0) >= 8
     _, mid, _ = st.columns([1, 1, 1])
     with mid:
-        st.markdown("### Yixing Goldsmith")
+        st.markdown("### Yixing Dashboards")
         if locked:
             st.error("Too many failed attempts — reload the page to try again.")
         else:
@@ -58,9 +66,9 @@ def password_ok() -> bool:
 
 
 @st.cache_data(ttl=300, show_spinner="Loading latest dashboard…")
-def fetch_dashboard() -> str:
+def fetch_dashboard(data_file: str) -> str:
     resp = requests.get(
-        f"https://api.github.com/repos/{DATA_REPO}/contents/{DATA_FILE}",
+        f"https://api.github.com/repos/{DATA_REPO}/contents/{data_file}",
         params={"ref": "main"},
         headers={
             "Authorization": f"Bearer {st.secrets['GITHUB_TOKEN']}",
@@ -71,9 +79,11 @@ def fetch_dashboard() -> str:
     resp.raise_for_status()
     html = resp.content.decode("utf-8")
     # Pre-authorise the dashboard's built-in JS gate so viewers aren't asked
-    # twice — Streamlit already gated server-side. Setting sessionStorage makes
-    # the gate script hide itself, but the .app container starts display:none
-    # inline and only checkPw() reveals it, so show it explicitly at end of body.
+    # twice — Streamlit already gated server-side. Each dashboard has its own
+    # PW constant, so read it back from the file rather than hard-coding one.
+    # Setting sessionStorage makes the gate script hide itself, but the .app
+    # container starts display:none inline and only checkPw() reveals it, so
+    # show it explicitly at end of body.
     m = re.search(r"PW\s*=\s*'([^']+)'", html)
     if m:
         set_auth = f"<script>sessionStorage.setItem('yx_auth','{m.group(1)}');</script>"
@@ -94,11 +104,21 @@ if password_ok():
         <style>
           header[data-testid="stHeader"] {display: none;}
           div[data-testid="stToolbar"] {display: none;}
-          .block-container {padding: 0 !important; max-width: 100% !important;}
+          .block-container {padding: 0.4rem 0 0 0 !important; max-width: 100% !important;}
           div[data-testid="stAppViewContainer"] {overflow: hidden;}
-          iframe {height: 100vh !important; width: 100% !important; border: none;}
+          /* leave a strip at the top for the dashboard toggle */
+          iframe {height: calc(100vh - 60px) !important; width: 100% !important; border: none;}
+          div[data-testid="stElementToolbar"] {display: none;}
         </style>
         """,
         unsafe_allow_html=True,
     )
-    components.html(fetch_dashboard(), height=900, scrolling=True)
+    # Single-select toggle; falls back to the first dashboard if deselected.
+    choice = st.segmented_control(
+        "Dashboard",
+        options=list(DASHBOARDS),
+        default=next(iter(DASHBOARDS)),
+        label_visibility="collapsed",
+        key="dash_choice",
+    ) or next(iter(DASHBOARDS))
+    components.html(fetch_dashboard(DASHBOARDS[choice]), height=900, scrolling=True)
